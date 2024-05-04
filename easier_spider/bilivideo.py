@@ -6,11 +6,135 @@ import requests
 import os
 from PIL import Image
 from io import BytesIO
+import random
 
 from easier_spider.config import useragent
 from easier_spider.config import bilicookies as cookies
 from easier_tools.Colorful_Console import ColoredText as CT
 
+
+# BV号和AV号的转换
+class BV2AV:
+    def __init__(self):
+        """转化算法来自于https://socialsisteryi.github.io/bilibili-API-collect/docs/misc/bvid_desc.html#python"""
+        self.XOR_CODE = 23442827791579
+        self.MASK_CODE = 2251799813685247
+        self.MAX_AID = 1 << 51
+        self.ALPHABET = "FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf"
+        self.ENCODE_MAP = 8, 7, 0, 5, 1, 3, 2, 4, 6
+        self.DECODE_MAP = tuple(reversed(self.ENCODE_MAP))
+
+        self.BASE = len(self.ALPHABET)
+        self.PREFIX = "BV1"
+        self.PREFIX_LEN = len(self.PREFIX)
+        self.CODE_LEN = len(self.ENCODE_MAP)
+
+    def av2bv(self, aid: int) -> str:
+        """
+        [使用方法]:
+            BV2AV().av2bv(111298867365120)  # 返回"BV1L9Uoa9EUx"
+        :param aid: av号
+        :return: bv号
+        """
+        self.bvid = [""] * 9
+        tmp = (self.MAX_AID | aid) ^ self.XOR_CODE
+        for i in range(self.CODE_LEN):
+            self.bvid[self.ENCODE_MAP[i]] = self.ALPHABET[tmp % self.BASE]
+            tmp //= self.BASE
+        return self.PREFIX + "".join(self.bvid)
+
+    def bv2av(self, bvid: str) -> int:
+        """
+        [使用方法]:
+            BV2AV().bv2av("BV1L9Uoa9EUx")  # 返回111298867365120
+        :param bvid: bv号
+        :return: av号
+        """
+        assert bvid[:3] == self.PREFIX
+        bvid = bvid[3:]
+        tmp = 0
+        for i in range(self.CODE_LEN):
+            idx = self.ALPHABET.index(bvid[self.DECODE_MAP[i]])
+            tmp = tmp * self.BASE + idx
+        return (tmp & self.MASK_CODE) ^ self.XOR_CODE
+
+
+# 获取b站登录状态(目前该功能只做了获取登录状态)
+class biliLoginState:
+    def __init__(self, headers):
+        """
+        :param headers: 比如headers={"Cookie": cookies().bilicookie, "User-Agent": useragent().pcChrome}
+        """
+        self.headers = headers
+        self.url = 'https://api.bilibili.com/x/web-interface/nav'
+
+    def get_login_state(self):
+        """
+        获取登录状态
+        [使用方法]:
+            biliLoginState(headers).get_login_state()
+        :return:
+        """
+        # get请求https://api.bilibili.com/x/web-interface/nav，参数是cookie，返回的是用户的信息
+        r = requests.get(url=self.url, headers=self.headers)
+        login_msg = r.json()
+        print("登录状态：", login_msg["data"]["isLogin"])
+
+
+# b站扫码登录(目前该功能没有实现)
+class biliQRLogin:
+    """B站扫码登录，目前该功能没有实现
+    [示例代码]:
+        QRL = biliQRLogin()
+        QRL.require()
+        QRL.generate()
+        while True:
+            status, cookie = QRL.scan_qr()
+            match status:
+                case 86090:
+                    print("扫码成功但未确认")
+                case 0:
+                    print("登录成功")
+                case 86101:
+                    print("未扫码")
+                case 86038:
+                    print("二维码失效")
+                    break
+    """
+    def __init__(self):
+        self.headers = {"User-Agent": useragent().pcChrome}
+        self.url = 'https://passport.bilibili.com/x/passport-login/web/qrcode/generate'
+
+    def require(self):
+        r = requests.get(self.url, headers=self.headers)
+        print(r.text)
+        data = r.json()
+        self.token = data['data']['qrcode_key']
+        self.qrcode_url = data['data']['url']
+
+    def generate(self):
+        r = requests.get(self.qrcode_url, headers=self.headers)
+        img = Image.open(BytesIO(r.content))
+        img.show()
+        print("请使用手机客户端扫描二维码登录...")
+
+    def scan_qr(self):
+        status = ''
+        cookie = ''
+        while True:
+            url = f'https://passport.bilibili.com/x/passport-login/web/qrcode/poll?key={self.token}'
+            response = requests.get(url)
+            data = response.json().get('data', {})
+            status = data.get('status')
+            if status in ['ScanSuccess', 'Success']:
+                cookie = response.headers.get('set-cookie')
+            if status in ['ScanSuccess', 'Success', 'Timeout', 'Invalid']:
+                break
+            time.sleep(1)
+        return status, cookie
+
+
+# 获取b站视频信息(目前已实现获取视频信息和部分下载视频功能，todo: 但是没写DASH的音频下载)
 class biliVideo:
     def __init__(self, bv, html_path=None):
         """
@@ -30,7 +154,7 @@ class biliVideo:
         self.headers = {
             "User-Agent": useragent().pcChrome,
             "Cookie": cookies().bilicookie,
-            'referer': 'https://www.bilibili.com'
+            'referer': self.url
         }
 
         # cid是鉴权参数。请求https://api.bilibili.com/x/player/pagelist，参数是bv号，返回的是视频的cid
@@ -65,10 +189,13 @@ class biliVideo:
             with open(f"{self.html_path}{self.bv}.html", 'w', encoding='utf-8') as f:
                 f.write(self.rtext)
 
-    def get_content(self, download_mp4=False, save_mp4_path=None):
+    def get_content(self):
         """
-        :param download_mp4: 是否下载视频
-        :param save_mp4_path: 视频保存路径，路径为f"{save_mp4_path}{self.bv}.mp4"
+        [使用方法]:
+            biliV = biliVideo("BV18x4y187DE")
+            biliV.get_html()  # [必要]获取html
+            biliV.get_content()
+        不能保证一定能用，获取view,dm的上个月还能用，这个月就不能用了，B站前端牛魔王又改了
         """
         if self.html_path is not None:
             with open(f"{self.html_path}{self.bv}.html", 'r', encoding='utf-8') as f:
@@ -95,18 +222,6 @@ class biliVideo:
             self.share = self.stat["share"]
         else:
             print("爬取基础数据错误，再见ヾ(￣▽￣)")
-
-        if download_mp4:
-            self.play_url = f"https://api.bilibili.com/x/player/wbi/playurl?bvid={self.bv}&cid={self.cid}&qn=80"
-            play_content = requests.get(url=self.play_url, headers=self.headers).json()
-            # 保存视频
-            video_content = requests.get(url=play_content["data"]["durl"][0]["url"], headers=self.headers).content
-            if save_mp4_path is not None:
-                with open(f"{save_mp4_path}{self.bv}.mp4", 'wb') as f:
-                    f.write(video_content)
-            else:
-                with open(f"{self.bv}.mp4", 'wb') as f:
-                    f.write(video_content)
 
         # # <div class="view-text" data-v-aed3e268="">2.8万</div>
         # pattern_view_data = re.compile(r'<div class="view-text"[^>]*>(.*?)\s*</div>')
@@ -174,7 +289,62 @@ class biliVideo:
         # else:
         #     print("爬取转发数据错误，再见ヾ(￣▽￣)")
 
+    def download_video(self, save_video_path=None, qn=80, platform="pc", high_quality=1, fnval=16):
+        """
+        [使用方法]:
+            biliV = biliVideo("BV18x4y187DE")
+            biliV.download_mp4()
+        参数具体请查看https://socialsisteryi.github.io/bilibili-API-collect/docs/video/videostream_url.html
+        :param save_video_path: 视频保存路径。路径为f"{save_mp4_path}{self.bv}.mp4"。如不指定，则保存在当前目录下f"{self.bv}.mp4"
+        :param qn: 视频清晰度。80就是1080p，64就是720p
+        :param platform: 平台。pc或html5
+        :param high_quality: 当platform=html5时，此值为1可使画质为1080p
+        :param fnval: 1代表mp4，16是DASH。非常建议使用16，但是音频需要单独下载，目前还没做
+        """
+        self.play_url = "https://api.bilibili.com/x/player/wbi/playurl"
+        params = {
+            "bvid": self.bv,
+            "cid": self.cid,
+            "qn": qn,
+            "fnver": 0,  # 定值
+            "fnval": fnval,
+            "fourk": 1,  # 是否允许4k
+            "platform": platform,
+            "high_quality": high_quality,
+        }
+        r = requests.get(url=self.play_url, headers=self.headers, params=params)
+        play_content = r.json()
+        if fnval == 1:
+            video_content = requests.get(url=play_content["data"]["durl"][0]["url"], headers=self.headers).content
+        else:
+            video_content = requests.get(url=play_content["data"]["dash"]["video"][0]["baseUrl"],
+                                         headers=self.headers).content
+        self._save_mp4(video_content, save_video_path)
+
     def to_csv(self):
+        """
+        将视频信息转为DataFrame
+        [使用方法]:
+            bvs_popular_df = pd.read_excel("input/xlsx_data/bvs_popular.xlsx")  # 读取bv号数据
+            bvs_popular = bvs_popular_df[0].tolist()
+            print(len(bvs_popular))
+            bv_content_df = pd.read_excel("input/xlsx_data/bvs_popular_msg.xlsx")
+
+            for i, bvs in enumerate(bvs_popular):
+                # 第352个视频BV1H1421R7i8的信息获取失败，因为tmd是星铁生日会
+                print(f"正在获取第{i+1}个视频信息: {bvs}")
+                biliV = biliVideo(bvs)
+                biliV.get_html()
+                biliV.get_content()
+                bv_content_df = pd.concat([bv_content_df, biliV.to_csv()], axis=0)
+                time.sleep(random.uniform(1, 2))
+                if i % 5 == 0:
+                    # 每5个视频保存一次，防止寄了
+                    bv_content_df.to_excel("input/xlsx_data/bvs_popular_msg.xlsx", index=False)
+
+            bv_content_df.to_excel("input/xlsx_data/bvs_popular_msg.xlsx", index=False)
+        :return:
+        """
         data = {
             "av": [self.aid],
             "bv": [self.bvid],
@@ -208,7 +378,20 @@ class biliVideo:
         print(CT('收藏数: ').blue() + f"{self.fav}")
         print(CT('分享数: ').blue() + f"{self.share}")
 
+    def _save_mp4(self, video_content, save_video_path):
+        """
+        [子函数]保存视频
+        :param video_content: 视频内容，是get请求返回的二进制数据
+        :param save_video_path: 视频保存路径
+        """
+        if save_video_path is not None:
+            with open(f"{save_video_path}{self.bv}.mp4", 'wb') as f:
+                f.write(video_content)
+        else:
+            with open(f"{self.bv}.mp4", 'wb') as f:
+                f.write(video_content)
 
+# b站评论相关操作(目前已实现发布评论功能， todo: 爬取评论)
 class biliReply:
     """暂时只支持视频评论"""
     def __init__(self, bv=None, av=None):
@@ -258,133 +441,101 @@ class biliReply:
             print("评论内容：", reply_data["data"]["reply"]["content"]["message"])
 
 
-class biliQRLogin:
-    """B站扫码登录，目前该功能没有实现
-    [示例代码]:
-        QRL = biliQRLogin()
-        QRL.require()
-        QRL.generate()
-        while True:
-            status, cookie = QRL.scan_qr()
-            match status:
-                case 86090:
-                    print("扫码成功但未确认")
-                case 0:
-                    print("登录成功")
-                case 86101:
-                    print("未扫码")
-                case 86038:
-                    print("二维码失效")
-                    break
-    """
+class biliRank:
     def __init__(self):
-        self.headers = {"User-Agent": useragent().pcChrome}
-        self.url = 'https://passport.bilibili.com/x/passport-login/web/qrcode/generate'
+        self.headers = {
+            "User-Agent": useragent().pcChrome,
+            "Cookie": cookies().bilicookie,
+        }
+        self.headers_no_cookie = {
+            "User-Agent": useragent().pcChrome,
+        }
+        self.url_popular = "https://api.bilibili.com/x/web-interface/popular"
+        self.url_ranking = "https://api.bilibili.com/x/web-interface/ranking/v2"
+        self.url_new = "https://api.bilibili.com/x/web-interface/dynamic/region"
 
-    def require(self):
-        r = requests.get(self.url, headers=self.headers)
-        print(r.text)
-        data = r.json()
-        self.token = data['data']['qrcode_key']
-        self.qrcode_url = data['data']['url']
-
-    def generate(self):
-        r = requests.get(self.qrcode_url, headers=self.headers)
-        img = Image.open(BytesIO(r.content))
-        img.show()
-        print("请使用手机客户端扫描二维码登录...")
-
-    def scan_qr(self):
-        status = ''
-        cookie = ''
-        while True:
-            url = f'https://passport.bilibili.com/x/passport-login/web/qrcode/poll?key={self.token}'
-            response = requests.get(url)
-            data = response.json().get('data', {})
-            status = data.get('status')
-            if status in ['ScanSuccess', 'Success']:
-                cookie = response.headers.get('set-cookie')
-            if status in ['ScanSuccess', 'Success', 'Timeout', 'Invalid']:
-                break
-            time.sleep(1)
-        return status, cookie
-
-
-class biliLoginState:
-    def __init__(self, headers):
+    def get_popular(self, use_cookie=True, pn=1, ps=20):
         """
-        :param headers: 比如headers={"Cookie": cookies().bilicookie, "User-Agent": useragent().pcChrome}
-        """
-        self.headers = headers
-        self.url = 'https://api.bilibili.com/x/web-interface/nav'
-
-    def get_login_state(self):
-        """
-        获取登录状态
+        获取综合热门视频列表：https://www.bilibili.com/v/popular/all
+        文档：https://socialsisteryi.github.io/bilibili-API-collect/docs/video_ranking/popular.html
         [使用方法]:
-            biliLoginState(headers).get_login_state()
-        :return:
+            bvs = biliRank().get_popular()
+        [注意]可以使用下面的方法获取热门视频列表：
+            bvs = []
+            for i in range(1, 6):
+                bvs.extend(biliRank().get_popular(pn=i))
+            print(bvs)
+        :param use_cookie: 是否使用cookie
+        :param pn: 页码
+        :param ps: 每页项数
+        :return: 视频的bv号列表
         """
-        # get请求https://api.bilibili.com/x/web-interface/nav，参数是cookie，返回的是用户的信息
-        r = requests.get(url=self.url, headers=self.headers)
-        login_msg = r.json()
-        print("登录状态：", login_msg["data"]["isLogin"])
+        params = {
+            "pn": pn,
+            "ps": ps
+        }
+        if use_cookie:
+            r = requests.get(url=self.url_popular, headers=self.headers, params=params)
+        else:
+            r = requests.get(url=self.url_popular, headers=self.headers_no_cookie, params=params)
+        popular_data = r.json()
+        # print("热门视频：")
+        # for i, video in enumerate(popular_data["data"]["list"]):
+        #     print(f"{i+1}.{video['bvid']} {video['title']}")
+        # 将BV号用list返回
+        return [video['bvid'] for video in popular_data["data"]["list"]]
 
-
-class BV2AV:
-    def __init__(self):
-        """转化算法来自于https://socialsisteryi.github.io/bilibili-API-collect/docs/misc/bvid_desc.html#python"""
-        self.XOR_CODE = 23442827791579
-        self.MASK_CODE = 2251799813685247
-        self.MAX_AID = 1 << 51
-        self.ALPHABET = "FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf"
-        self.ENCODE_MAP = 8, 7, 0, 5, 1, 3, 2, 4, 6
-        self.DECODE_MAP = tuple(reversed(self.ENCODE_MAP))
-
-        self.BASE = len(self.ALPHABET)
-        self.PREFIX = "BV1"
-        self.PREFIX_LEN = len(self.PREFIX)
-        self.CODE_LEN = len(self.ENCODE_MAP)
-
-    def av2bv(self, aid: int) -> str:
+    def get_ranking(self, tid=None):
         """
+        获取排行榜视频列表：https://www.bilibili.com/v/popular/rank/all
         [使用方法]:
-            BV2AV().av2bv(111298867365120)  # 返回"BV1L9Uoa9EUx"
-        :param aid: av号
-        :return: bv号
+            biliRank().get_ranking()
+        :param tid: [有问题]分区id，但似乎不起作用。文档: https://socialsisteryi.github.io/bilibili-API-collect/docs/video/video_zone.html
+        :return: 视频的bv号列表
         """
-        self.bvid = [""] * 9
-        tmp = (self.MAX_AID | aid) ^ self.XOR_CODE
-        for i in range(self.CODE_LEN):
-            self.bvid[self.ENCODE_MAP[i]] = self.ALPHABET[tmp % self.BASE]
-            tmp //= self.BASE
-        return self.PREFIX + "".join(self.bvid)
+        if tid is not None:
+            r = requests.get(url=self.url_ranking, headers=self.headers, params={"tid": tid})
+        else:
+            r = requests.get(url=self.url_ranking, headers=self.headers)
+        ranking_data = r.json()
+        print("排行榜：")
+        for i, video in enumerate(ranking_data["data"]["list"]):
+            print(f"{i+1}.{video['bvid']} {video['title']}")
+        return [video['bvid'] for video in ranking_data["data"]["list"]]
 
-    def bv2av(self, bvid: str) -> int:
+    def get_new(self, rid=1, pn=1, ps=5):
         """
+        [有问题]获取新视频列表，但似乎不是最新的，目前不知道是干什么的
         [使用方法]:
-            BV2AV().bv2av("BV1L9Uoa9EUx")  # 返回111298867365120
-        :param bvid: bv号
-        :return: av号
+            biliRank().get_new()
+        :param rid: [必要]目标分区tid
+        :param pn: 页码
+        :param ps: 每页项数
         """
-        assert bvid[:3] == self.PREFIX
-        bvid = bvid[3:]
-        tmp = 0
-        for i in range(self.CODE_LEN):
-            idx = self.ALPHABET.index(bvid[self.DECODE_MAP[i]])
-            tmp = tmp * self.BASE + idx
-        return (tmp & self.MASK_CODE) ^ self.XOR_CODE
-
+        params = {
+            "rid": rid,
+            "pn": pn,
+            "ps": ps
+        }
+        r = requests.get(url=self.url_new, headers=self.headers, params=params)
+        new_data = r.json()
+        print("新视频：")
+        for i, video in enumerate(new_data["data"]["archives"]):
+            print(f"{i+1}.{video['bvid']} {video['title']}")
+        return [video['bvid'] for video in new_data["data"]["archives"]]
 
 if __name__ == '__main__':
+    biliRank().get_new(rid=129)
 
-    bv_content_df = pd.DataFrame()
-    for bvs in ["BV1dy421e7KG", "BV1DZ421J7a2"]:
-        biliV = biliVideo(bvs)
-        biliV.get_html()
-        biliV.get_content()
-        bv_content_df = pd.concat([bv_content_df, biliV.to_csv()], axis=0)
-    bv_content_df.to_excel("input/xlsx_data/bv_msg.xlsx", index=False)
+
+    # bv_content_df = pd.DataFrame()
+    # for bvs in ["BV1dy421e7KG", "BV1DZ421J7a2"]:
+    #     biliV = biliVideo(bvs)
+    #     biliV.get_html()
+    #     biliV.get_content()
+    #     bv_content_df = pd.concat([bv_content_df, biliV.to_csv()], axis=0)
+    # bv_content_df.to_excel("input/xlsx_data/bv_msg.xlsx", index=False)
+
 
 
 
