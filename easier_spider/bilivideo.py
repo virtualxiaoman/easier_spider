@@ -59,7 +59,40 @@ class BV2AV:
         return (tmp & self.MASK_CODE) ^ self.XOR_CODE
 
 
-# 获取b站登录状态(目前该功能只做了获取登录状态)
+# 获取鉴权参数
+class AuthUtil:
+    @staticmethod
+    def get_dev_id():
+        """
+        获取设备ID
+        [使用方法]:
+            print(AuthUtil.get_dev_id())
+        :return: 设备ID
+        """
+        b = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F']
+        s = list("xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx")
+        for i in range(len(s)):
+            if s[i] == '-' or s[i] == '4':
+                continue
+            random_int = random.randint(0, 15)
+            if s[i] == 'x':
+                s[i] = b[random_int]
+            else:
+                s[i] = b[(3 & random_int) | 8]
+        return ''.join(s)  # 得到B182F410-3865-46ED-840F-B58B71A78B5E这样的
+
+    @staticmethod
+    def get_timestamp():
+        """
+        获取时间戳
+        [使用方法]:
+            print(AuthUtil.get_timestamp())
+        :return: 时间戳
+        """
+        return int(time.time())
+
+
+# 获取b站登录状态(目前该功能只做了获取登录状态, todo:应该将biliLoginState与biliQRLogin合并)
 class biliLoginState:
     def __init__(self, headers):
         """
@@ -134,7 +167,7 @@ class biliQRLogin:
         return status, cookie
 
 
-# 获取b站视频信息(目前已实现获取视频信息和部分下载视频功能，todo: 但是没写DASH的音频下载)
+# 获取b站视频信息(目前已实现获取视频信息、下载视频和音频功能)
 class biliVideo:
     def __init__(self, bv, html_path=None):
         """
@@ -148,6 +181,7 @@ class biliVideo:
         :param html_path: 如不指定，则不存储。如指定，则为f"{self.html_path}{self.bv}.html"
 
         """
+        # 基本信息
         self.bv = bv  # 你要爬取的视频的bv号
         self.html_path = html_path  # html存储路径
         self.url = f"https://www.bilibili.com/video/{self.bv}"
@@ -157,12 +191,15 @@ class biliVideo:
             'referer': self.url
         }
 
+        # 鉴权参数
         # cid是鉴权参数。请求https://api.bilibili.com/x/player/pagelist，参数是bv号，返回的是视频的cid
         self.cid = requests.get(url=f"https://api.bilibili.com/x/player/pagelist?bvid={self.bv}",
                                 headers=self.headers).json()["data"][0]["cid"]  # 目前这个似乎只适用于单P视频，暂未验证
 
+        # 网页文本
         self.rtext = None  # 网页的文本，也就是r.text
 
+        # 基本信息
         self.aid = None  # 视频的av号
         self.bvid = None  # 视频的bv号，可以用来和bv号对比，看看有没有错误
         self.title = None  # 视频的标题
@@ -177,6 +214,10 @@ class biliVideo:
         self.coin = None  # 视频的投币量
         self.fav = None  # 视频的收藏量
         self.share = None  # 视频的转发量
+
+        # 额外信息
+        self.play_url = "https://api.bilibili.com/x/player/wbi/playurl"  # 视频下载信息的获取地址
+        self.down_video_json = None  # 视频的下载信息（包含视频与音频地址，在download_video()与download_audio()中获取）
 
     def get_html(self):
         biliLoginState(self.headers).get_login_state()
@@ -293,33 +334,83 @@ class biliVideo:
         """
         [使用方法]:
             biliV = biliVideo("BV18x4y187DE")
-            biliV.download_mp4()
+            biliV.download_video()
         参数具体请查看https://socialsisteryi.github.io/bilibili-API-collect/docs/video/videostream_url.html
-        :param save_video_path: 视频保存路径。路径为f"{save_mp4_path}{self.bv}.mp4"。如不指定，则保存在当前目录下f"{self.bv}.mp4"
-        :param qn: 视频清晰度。80就是1080p，64就是720p
+        :param save_video_path: 视频保存路径。路径为f"{save_video_path}{self.bv}.mp4"。如不指定，则保存在当前目录下f"{self.bv}.mp4"
+        :param qn: 视频清晰度。80就是1080p，64就是720p。该值在DASH格式下无效，因为DASH会取到所有分辨率的流地址
         :param platform: 平台。pc或html5
         :param high_quality: 当platform=html5时，此值为1可使画质为1080p
-        :param fnval: 1代表mp4，16是DASH。非常建议使用16，但是音频需要单独下载，目前还没做
+        :param fnval: 1代表mp4，16是DASH。非常建议使用16。
         """
-        self.play_url = "https://api.bilibili.com/x/player/wbi/playurl"
         params = {
             "bvid": self.bv,
             "cid": self.cid,
             "qn": qn,
             "fnver": 0,  # 定值
             "fnval": fnval,
-            "fourk": 1,  # 是否允许4k
+            "fourk": 1,  # 是否允许4k。取0代表画质最高1080P（这是不传递fourk时的默认值），取1代表最高4K
             "platform": platform,
             "high_quality": high_quality,
         }
         r = requests.get(url=self.play_url, headers=self.headers, params=params)
-        play_content = r.json()
+        self.down_video_json = r.json()
+        # print(self.down_video_json)
         if fnval == 1:
-            video_content = requests.get(url=play_content["data"]["durl"][0]["url"], headers=self.headers).content
+            video_content = requests.get(url=self.down_video_json["data"]["durl"][0]["url"], headers=self.headers).content
         else:
-            video_content = requests.get(url=play_content["data"]["dash"]["video"][0]["baseUrl"],
+            video_content = requests.get(url=self.down_video_json["data"]["dash"]["video"][0]["baseUrl"],
                                          headers=self.headers).content
         self._save_mp4(video_content, save_video_path)
+
+    def download_audio(self, save_audio_path=None, save_audio_name=None, fnval=16):
+        """
+        下载音频。如果视频音频都要，建议在download_video之后使用，这样能减少一次请求。
+        [使用方法]:
+            biliV = biliVideo("BV12a411k7os")
+            biliV.download_audio(save_audio_path="output")
+        :param save_audio_path: 音频保存路径
+        :param save_audio_name: 音频保存名称
+        :param fnval: 一般就是16了，原因请见download_video()里fnval参数的描述
+        :return:
+        """
+        if self.down_video_json is None:
+            params = {
+                "bvid": self.bv,
+                "cid": self.cid,
+                "fnval": fnval
+            }
+            r = requests.get(url=self.play_url, headers=self.headers, params=params)
+            self.down_video_json = r.json()
+        # print(self.down_video_json)
+        audio_content = requests.get(url=self.down_video_json["data"]["dash"]["audio"][0]["baseUrl"],
+                                     headers=self.headers).content
+        self._save_mp3(audio_content, save_audio_path, save_audio_name)
+
+    def download_videoshot(self, save_videoshot_path=None, save_videoshot_name=None, index=0):
+        """
+        视频快照下载
+        [使用方法]
+            biliv = biliVideo("BV1zm411y7eF")
+            biliv.download_videoshot(save_videoshot_path="output", save_videoshot_name="快照")
+        :param save_videoshot_path: 视频快照保存路径。
+        :param save_videoshot_name: 视频快照保存名称。保存的名字是f"{save_videoshot_path}{save_videoshot_name}_{i}.jpg"
+        :param index: 是否需要视频快照的索引。默认为0表示不需要。
+        :return: (list)视频快照地址
+        """
+        self.videoshot_url = "https://api.bilibili.com/x/player/videoshot"
+        params = {
+            "bvid": self.bv,
+            "index": index
+        }
+        r = requests.get(url=self.videoshot_url, headers=self.headers, params=params)
+        r_json = r.json()
+        # print(r_json)
+        videoshot_url = r_json["data"]["image"]
+        for i, url in enumerate(videoshot_url):
+            url = "https:" + url
+            videoshot_content = requests.get(url=url, headers=self.headers).content
+            self._save_pic(videoshot_content, save_videoshot_path, save_videoshot_name+'_'+str(i))
+        return videoshot_url
 
     def to_csv(self):
         """
@@ -378,18 +469,79 @@ class biliVideo:
         print(CT('收藏数: ').blue() + f"{self.fav}")
         print(CT('分享数: ').blue() + f"{self.share}")
 
-    def _save_mp4(self, video_content, save_video_path):
+    def _save_mp4(self, video_content, save_video_path=None, save_video_name=None):
         """
         [子函数]保存视频
         :param video_content: 视频内容，是get请求返回的二进制数据
         :param save_video_path: 视频保存路径
+        :param save_video_name: 视频保存名称
         """
+        # 如果地址不是以/结尾，就加上/
         if save_video_path is not None:
-            with open(f"{save_video_path}{self.bv}.mp4", 'wb') as f:
+            if save_video_path[-1] != "/":
+                save_video_path += "/"
+        # 视频名
+        if save_video_name is None:
+            name = self.bv
+        else:
+            name = save_video_name
+        # 保存视频
+        if save_video_path is not None:
+            with open(f"{save_video_path}{name}.mp4", 'wb') as f:
                 f.write(video_content)
         else:
-            with open(f"{self.bv}.mp4", 'wb') as f:
+            with open(f"{name}.mp4", 'wb') as f:
                 f.write(video_content)
+
+    def _save_mp3(self, audio_content, save_audio_path=None, save_audio_name=None):
+        """
+        [子函数]保存音频
+        :param audio_content: 音频内容，是get请求返回的二进制数据
+        :param save_audio_path: 音频保存路径
+        :param save_audio_name: 音频保存名称
+        """
+        # 如果地址不是以/结尾，就加上/
+        if save_audio_path is not None:
+            if save_audio_path[-1] != "/":
+                save_audio_path += "/"
+        # 音频名
+        if save_audio_name is None:
+            name = self.bv
+        else:
+            name = save_audio_name
+        # 保存音频
+        if save_audio_path is not None:
+            with open(f"{save_audio_path}{name}.mp3", 'wb') as f:
+                f.write(audio_content)
+        else:
+            with open(f"{name}.mp3", 'wb') as f:
+                f.write(audio_content)
+
+    def _save_pic(self, pic_content, save_pic_path=None, save_pic_name=None, save_type="jpg"):
+        """
+        [子函数]保存图片
+        :param pic_content: 图片内容，是get请求返回的二进制数据
+        :param save_pic_path: 图片保存路径
+        :param save_pic_name: 图片保存名称
+        :param save_type: 图片保存格式
+        """
+        # 如果地址不是以/结尾，就加上/
+        if save_pic_path is not None:
+            if save_pic_path[-1] != "/":
+                save_pic_path += "/"
+        # 图片名
+        if save_pic_name is None:
+            name = str(self.bv) + "的快照"
+        else:
+            name = save_pic_name
+        # 保存图片
+        if save_pic_path is not None:
+            with open(f"{save_pic_path}{name}.{save_type}", 'wb') as f:
+                f.write(pic_content)
+        else:
+            with open(f"{name}.{save_type}", 'wb') as f:
+                f.write(pic_content)
+
 
 # b站评论相关操作(目前已实现发布评论功能， todo: 爬取评论)
 class biliReply:
@@ -427,7 +579,7 @@ class biliReply:
             "oid": self.av,
             "message": message,
             "plat": 1,
-            "csrf": cookies().bili_jct
+            "csrf": cookies().bili_jct  # CSRF Token是cookie中的bili_jct
         }
         r = requests.post(url=post_url, headers=self.headers, data=post_data)
         reply_data = r.json()
@@ -441,6 +593,48 @@ class biliReply:
             print("评论内容：", reply_data["data"]["reply"]["content"]["message"])
 
 
+# b站私信功能(似乎寄了)
+class biliMessage:
+    def __init__(self):
+        self.headers = {
+            "User-Agent": useragent().pcChrome,
+            "Cookie": cookies().bilicookie,
+            'referer': 'https://message.bilibili.com/'
+        }
+
+    def send_msg(self, sender_uid, receiver_id, content, msg_type=1):
+        """
+        发送私信
+        :param sender_uid: 发送者mid
+        :param receiver_id: 接收者mid
+        :param content: 内容
+        :param msg_type: 消息类型。1:发送文字 2:发送图片 5:撤回消息
+        :return:
+        """
+        url = 'https://api.vc.bilibili.com/web_im/v1/web_im/send_msg'
+        dev_id = "B182F410-3865-46ED-840F-B58B71A78B5E"  # 设备id
+        timestamp = AuthUtil.get_timestamp()  # 时间戳（秒）
+        data = {
+            'msg[sender_uid]': sender_uid,
+            'msg[receiver_id]': receiver_id,
+            'msg[receiver_type]': 1,  # 固定为1
+            'msg[msg_type]': msg_type,
+            'msg[msg_status]': 0,  # 固定为0
+            'msg[content]': {"content": content},
+            'msg[timestamp]': timestamp,
+            'msg[new_face_version]': 0,  # 目前测出来的有0或1
+            'msg[dev_id]': dev_id,
+            'from_firework': '0',
+            'build': '0',
+            'mobi_app': 'web',
+            'csrf_token': cookies().bili_jct,
+            'csrf': cookies().bili_jct
+        }
+        print(data)
+        response = requests.post(url, data=data, headers=self.headers)
+        print(response.text)
+
+# b站的一些排行榜(目前建议只使用get_popular，其余的不太行的样子)
 class biliRank:
     def __init__(self):
         self.headers = {
@@ -525,18 +719,10 @@ class biliRank:
         return [video['bvid'] for video in new_data["data"]["archives"]]
 
 if __name__ == '__main__':
-    biliRank().get_new(rid=129)
+    biliM = biliMessage()
+    biliM.send_msg(506925078, 381978872, "up主你好！催更！！")
 
-
-    # bv_content_df = pd.DataFrame()
-    # for bvs in ["BV1dy421e7KG", "BV1DZ421J7a2"]:
-    #     biliV = biliVideo(bvs)
-    #     biliV.get_html()
-    #     biliV.get_content()
-    #     bv_content_df = pd.concat([bv_content_df, biliV.to_csv()], axis=0)
-    # bv_content_df.to_excel("input/xlsx_data/bv_msg.xlsx", index=False)
-
-
+    pass
 
 
 

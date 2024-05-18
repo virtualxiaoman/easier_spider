@@ -5,15 +5,15 @@
 ```
 .
 ├── easier_spider
-│   ├── config.py
-│   ├── bilibvideo.py
+│   ├── config.py
+│   ├── bilibvideo.py
 ├── easier_tools
-│   ├── Colorful_Console.py
+│   ├── Colorful_Console.py
 ```
 
 其余文件非必须。
 
-config.py可以如下配置:
+config.py可以如下配置，其中需要在`self.bilicookie = `里填入你的cookie：
 ```python
 
 class bilicookies:
