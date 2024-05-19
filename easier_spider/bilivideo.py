@@ -64,7 +64,7 @@ class AuthUtil:
     @staticmethod
     def get_dev_id():
         """
-        获取设备ID
+        获取设备ID(可以自行在浏览器中查看)
         [使用方法]:
             print(AuthUtil.get_dev_id())
         :return: 设备ID
@@ -593,7 +593,7 @@ class biliReply:
             print("评论内容：", reply_data["data"]["reply"]["content"]["message"])
 
 
-# b站私信功能(似乎寄了)
+# b站私信功能
 class biliMessage:
     def __init__(self):
         self.headers = {
@@ -605,6 +605,9 @@ class biliMessage:
     def send_msg(self, sender_uid, receiver_id, content, msg_type=1):
         """
         发送私信
+        [使用方法]
+            biliM = biliMessage()
+            biliM.send_msg(506925078, 381978872, "催更[doge]")
         :param sender_uid: 发送者mid
         :param receiver_id: 接收者mid
         :param content: 内容
@@ -620,19 +623,25 @@ class biliMessage:
             'msg[receiver_type]': 1,  # 固定为1
             'msg[msg_type]': msg_type,
             'msg[msg_status]': 0,  # 固定为0
-            'msg[content]': {"content": content},
+            'msg[content]': json.dumps({"content": content}),  # 使用 json.dumps() 将内容转换为 JSON 格式字符串
             'msg[timestamp]': timestamp,
-            'msg[new_face_version]': 0,  # 目前测出来的有0或1
+            # 'msg[new_face_version]': 0,  # 目前测出来的有0或1，带免费表情的时候是1，付费的我没有。
             'msg[dev_id]': dev_id,
-            'from_firework': '0',
-            'build': '0',
-            'mobi_app': 'web',
-            'csrf_token': cookies().bili_jct,
+            # 'from_firework': '0',
+            # 'build': '0',
+            # 'mobi_app': 'web',
+            # 'csrf_token': cookies().bili_jct,
             'csrf': cookies().bili_jct
         }
-        print(data)
-        response = requests.post(url, data=data, headers=self.headers)
-        print(response.text)
+        r = requests.post(url, data=data, headers=self.headers)
+        r_json = r.json()
+        if r_json['code'] == 0:
+            msg_content = r_json['data']['msg_content']
+            content_dict = json.loads(msg_content)
+            content_value = content_dict['content']
+            print("发送成功，内容是：", content_value)
+        else:
+            print("发送失败，错误码：", r_json['code'])
 
 # b站的一些排行榜(目前建议只使用get_popular，其余的不太行的样子)
 class biliRank:
@@ -720,7 +729,7 @@ class biliRank:
 
 if __name__ == '__main__':
     biliM = biliMessage()
-    biliM.send_msg(506925078, 381978872, "up主你好！催更！！")
+    biliM.send_msg(506925078, 381978872, "催更[doge]")
 
     pass
 
