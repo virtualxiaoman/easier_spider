@@ -335,7 +335,8 @@ class biliVideo:
         [使用方法]:
             biliV = biliVideo("BV18x4y187DE")
             biliV.download_video()
-        参数具体请查看https://socialsisteryi.github.io/bilibili-API-collect/docs/video/videostream_url.html
+        参数具体请查看 `BAC文档
+        <https://socialsisteryi.github.io/bilibili-API-collect/docs/video/videostream_url.html>`__.
         :param save_video_path: 视频保存路径。路径为f"{save_video_path}{self.bv}.mp4"。如不指定，则保存在当前目录下f"{self.bv}.mp4"
         :param qn: 视频清晰度。80就是1080p，64就是720p。该值在DASH格式下无效，因为DASH会取到所有分辨率的流地址
         :param platform: 平台。pc或html5
@@ -385,6 +386,27 @@ class biliVideo:
         audio_content = requests.get(url=self.down_video_json["data"]["dash"]["audio"][0]["baseUrl"],
                                      headers=self.headers).content
         self._save_mp3(audio_content, save_audio_path, save_audio_name)
+
+    def download_pic(self, save_pic_path=None, save_pic_name=None):
+        """
+        图片下载
+        [使用方法]
+            biliV = biliVideo("BV1Jv4y1p7q3")
+            biliV.get_html()
+            biliV.get_content()
+            biliV.download_pic(save_pic_path="output", save_pic_name="BV1Jv4y1p7q3封面")
+        :param save_pic_path: 图片保存路径
+        :param save_pic_name: 图片保存名称
+        :return:
+        """
+        if self.pic is None:
+            self.get_content()
+        if self.pic is None:
+            print("图片地址获取失败，再见ヾ(￣▽￣)")
+            return 114514
+        print(self.pic)
+        pic_content = requests.get(url=self.pic, headers=self.headers).content
+        self._save_pic(pic_content, save_pic_path, save_pic_name)
 
     def download_videoshot(self, save_videoshot_path=None, save_videoshot_name=None, index=0):
         """
@@ -728,8 +750,16 @@ class biliRank:
         return [video['bvid'] for video in new_data["data"]["archives"]]
 
 if __name__ == '__main__':
-    biliM = biliMessage()
-    biliM.send_msg(506925078, 381978872, "催更[doge]")
+    # biliM = biliMessage()
+    # biliM.send_msg(506925078, 381978872, "催更[doge]")
+
+    biliV = biliVideo("BV1Jv4y1p7q3")
+    biliV.get_html()
+    biliV.get_content()
+    biliV.download_pic(save_pic_path="output", save_pic_name="BV1Jv4y1p7q3封面")
+
+    # biliR = biliReply(bv="BV1Ss421M7VJ")
+    # biliR.send_reply("兄弟你好香啊😋")
 
     pass
 
