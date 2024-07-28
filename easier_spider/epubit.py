@@ -1,7 +1,9 @@
 # 对于一本书的其中一页的网页链接：
 # https://labs.epubit.com/onlineEbookReader?id=190b3825-3013-4fb9-88e4-c9c5455ddbfb&pid=27be6d78-dc2b-43fb-a9f0-cf76723af3ca&isFalls=true&src=normal
-# 其中pid是projectId，书的ID。
-
+# 其中pid是projectId，书的ID。id是folderId，书的某一页的ID。
+# 使用"https://labs.epubit.com/pubcloud/content/front/getContentsByFolderId"来获取书的内容，参数是folderId和projectId
+# 使用"https://labs.epubit.com/pubcloud/content/front/nextNotNullSection"来获取下一页的folderId，参数是folderId和projectId
+#
 # 右侧工具栏
 # 目录：https://labs.epubit.com/pubcloud/content/front/ebookFolderTree?projectId=27be6d78-dc2b-43fb-a9f0-cf76723af3ca
 # 搜索：https://labs.epubit.com/pubcloud/content/front/ebookSearch?keyword=&page=1&size=5&tag=&projectType=&projectId=27be6d78-dc2b-43fb-a9f0-cf76723af3ca
@@ -13,30 +15,6 @@ import warnings
 
 import requests
 from easier_spider.config import useragent, epubitcookies
-
-# headers = {
-#     "Cookie": epubitcookies().cookie,
-#     "User-Agent": useragent().pcChrome,
-#     "origin-domain": "labs.epubit.com",  # 这个不加就直接寄
-#     "host": "labs.epubit.com",  # 该参数似乎可以不加，但是先留着吧
-# }
-
-# # 请求https://labs.epubit.com/onlineEbookReader?id={page_id}&pid={pid}并保存到output/epubit/{book_name}/{page_id}.html
-# def download_epubit_book(page_id, pid, book_name):
-#     # 检查文件夹是否存在，不存在则创建
-#     if not os.path.exists(f"output/epubit/{book_name}"):
-#         os.makedirs(f"output/epubit/{book_name}")
-#     # 请求当前page_id
-#     url = f"https://labs.epubit.com/onlineEbookReader?id={page_id}&pid={pid}"
-#     response = requests.get(url, headers=headers)
-#     # 保存
-#     with open(f"output/epubit/{book_name}/{page_id}.html", "w") as f:
-#         f.write(response.text)
-#
-# # 读取本地的output/epubit/8d98f028-d7d0-4a9c-b7f2-d53c54a19f8f.html
-# def read_epubit_book(page_id, book_name='temp'):
-#     with open(f"output/epubit/{book_name}/{page_id}.html", "r") as f:
-#         return f.read()
 
 class epubit:
     def __init__(self, pid, book_name="temp"):
@@ -215,10 +193,4 @@ class epubit:
             time.sleep(random.uniform(140, 165))
 
 ep = epubit("27be6d78-dc2b-43fb-a9f0-cf76723af3ca", "深度学习高手笔记 卷2：经典应用")
-# c = ep.get_content("bcd13a1f-697e-4008-9cec-91978edea3f4")
-# ep.content2html(c)
 ep.get_whole_content("c082e498-da75-410e-ac04-bcc95b883546")
-
-# download_epubit_book("5d9b5e50-1bec-4efc-983b-b69eee4108a4", "27be6d78-dc2b-43fb-a9f0-cf76723af3ca", book_name="深度学习高手笔记 卷2：经典应用")
-# html = read_epubit_book("5d9b5e50-1bec-4efc-983b-b69eee4108a4", book_name="深度学习高手笔记 卷2：经典应用")
-# print(html)
